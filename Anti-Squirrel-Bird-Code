@@ -1,0 +1,203 @@
+#include <Servo.h>
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
+#include <Wire.h>
+#define inputCLK 2
+#define inputDT 3
+int counter = 0;
+int prevcounter = 0;
+int currentStateCLK;
+int previousStateCLK;
+String encdir = "";
+
+Adafruit_MPU6050 mpu;
+int interval = 3000;
+int interval1 = 1500;
+int interval2 = 3000;
+unsigned long prevMillis = 0;
+unsigned long prevMillis1 = 0;
+unsigned long prevMillis2 = 0;
+unsigned long currentMillis;
+Servo Plat_Servo, Door_Servo;
+
+void setup() {
+  pinMode (inputCLK, INPUT);
+  pinMode (inputDT, INPUT);
+  Serial.begin(115200);
+  mpusetup(); /*call function for initializing the mpu*/
+  previousStateCLK = digitalRead(inputCLK);
+  Plat_Servo.attach(9); /*Platform servo attached to PWM pin9*/
+  Plat_Servo.write(80);  /*init servo*/
+  Door_Servo.attach(10); /*Door servo attached to PWM pin10*/
+  Door_Servo.write(180); /*init servo*/
+  attachInterrupt(digitalPinToInterrupt(2), encoder, CHANGE); /*set up interrupt pins for rotary encoder*/
+  attachInterrupt(digitalPinToInterrupt(3), encoder, CHANGE); /*set up interrupt pins for rotary encoder*/
+}
+
+void loop() {
+  /* Get new sensor events with the readings */
+  sensors_event_t a, g, temp;
+  mpu.getEvent(&a, &g, &temp);
+
+  /*start counting milliseconds for timing later*/
+  currentMillis = millis();
+//Serial.println(g.gyro.x);
+//Serial.println(g.gyro.y);
+//Serial.println(a.acceleration.x);
+//Serial.println(a.acceleration.y);
+  /*condition if the gyro x and y go over certain rad/s. OR condition if the accelerometer x and y is over certain m/s^2*/
+  if ( ((abs(g.gyro.x) > 0.3) || (abs(g.gyro.y) > 0.3)) || ((abs(a.acceleration.x) > 1.7) || (abs(a.acceleration.y) > 1.7))  ) {
+    prevcounter = counter; /*take the current counter value and store it into prevcounter*/
+    Door_Servo.write(60); /*servo close door*/
+    delay(200); /*must pause code here to ensure enough power is sent to the door (since the door operates slowly due to gear ratio. Tested vigorously, and does not cause timing issues with other sensors*/
+    if (currentMillis - prevMillis >= interval) {
+      prevMillis = currentMillis;
+      Plat_Servo.write(105); /*servo close platform*/
+    }
+    prevMillis1 = 0; /*initialize next prevMillis's for the else condition*/
+    prevMillis2 = 0;
+    
+  }
+
+  /*condition if the gyro is stationary*/
+  else {
+
+    Door_Servo.write(180);
+    
+    /*delay to attempt to open the door. This runs every 1s.*/
+    if (currentMillis - prevMillis1 >= interval1) {
+      prevMillis1 = currentMillis;
+      Plat_Servo.write(60);
+    }
+    /*delay to be checked every 2s if the current counter error is less than or equal to 8. In other words, if the gate cannot open, it will
+      continuously attempt to close and open until the counter and prev counter are almost matched. The delay is used to ensure if the gate is not opening,
+      it does not stall by running the prev if condition*/
+    if (currentMillis - prevMillis2 >= interval2) {
+      prevMillis2 = currentMillis;
+      if (abs((abs(prevcounter) - abs(counter)))  <= 8) {
+        Plat_Servo.write(270);
+        
+      }
+
+    }
+
+
+    prevMillis = 0;
+
+
+  }
+
+}
+
+/*function for initializing mpu*/
+double mpusetup() {
+
+  Serial.println("Adafruit MPU6050 test!");
+
+  // Try to initialize!
+  if (!mpu.begin()) {
+    Serial.println("Failed to find MPU6050 chip");
+    while (1) {
+      delay(10);
+    }
+  }
+  Serial.println("MPU6050 Found!");
+
+  mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+  Serial.print("Accelerometer range set to: ");
+  switch (mpu.getAccelerometerRange()) {
+    case MPU6050_RANGE_2_G:
+      Serial.println("+-2G");
+      break;
+    case MPU6050_RANGE_4_G:
+      Serial.println("+-4G");
+      break;
+    case MPU6050_RANGE_8_G:
+      Serial.println("+-8G");
+      break;
+    case MPU6050_RANGE_16_G:
+      Serial.println("+-16G");
+      break;
+  }
+  mpu.setGyroRange(MPU6050_RANGE_1000_DEG);
+  Serial.print("Gyro range set to: ");
+  switch (mpu.getGyroRange()) {
+    case MPU6050_RANGE_250_DEG:
+      Serial.println("+- 250 deg/s");
+      break;
+    case MPU6050_RANGE_500_DEG:
+      Serial.println("+- 500 deg/s");
+      break;
+    case MPU6050_RANGE_1000_DEG:
+      Serial.println("+- 1000 deg/s");
+      break;
+    case MPU6050_RANGE_2000_DEG:
+      Serial.println("+- 2000 deg/s");
+      break;
+  }
+
+  mpu.setFilterBandwidth(MPU6050_BAND_5_HZ);
+  Serial.print("Filter bandwidth set to: ");
+  switch (mpu.getFilterBandwidth()) {
+    case MPU6050_BAND_260_HZ:
+      Serial.println("260 Hz");
+      break;
+    case MPU6050_BAND_184_HZ:
+      Serial.println("184 Hz");
+      break;
+    case MPU6050_BAND_94_HZ:
+      Serial.println("94 Hz");
+      break;
+    case MPU6050_BAND_44_HZ:
+      Serial.println("44 Hz");
+      break;
+    case MPU6050_BAND_21_HZ:
+      Serial.println("21 Hz");
+      break;
+    case MPU6050_BAND_10_HZ:
+      Serial.println("10 Hz");
+      break;
+    case MPU6050_BAND_5_HZ:
+      Serial.println("5 Hz");
+      break;
+  }
+
+  Serial.println("");
+  delay(100);
+}
+
+
+/*function for encoder interrupt*/
+int encoder() {
+  // Read the current state of inputCLK
+  currentStateCLK = digitalRead(inputCLK);
+
+  // If the previous and the current state of the inputCLK are different then a pulse has occured
+  if (currentStateCLK != previousStateCLK && currentStateCLK == 1) {
+
+    // If the inputDT state is different than the inputCLK state then
+    // the encoder is rotating counterclockwise
+    if (digitalRead(inputDT) != currentStateCLK) {
+      counter --;
+      encdir = "CCW";
+
+
+    } else {
+      // Encoder is rotating clockwise
+      counter ++;
+      encdir = "CW";
+
+
+    }
+    Serial.print("Direction: ");
+    Serial.print(encdir);
+    Serial.print(" -- Value: ");
+    Serial.println(counter);
+    Serial.print("Current:");
+    Serial.println(currentStateCLK);
+    Serial.print("Prev:");
+    Serial.println(previousStateCLK);
+  }
+  // Update previousStateCLK with the current state
+  previousStateCLK = currentStateCLK;
+}
